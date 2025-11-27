@@ -1,0 +1,114 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ai-backend-api
+  namespace: ai-backend
+  labels:
+    app: ai-backend
+    component: api
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: ai-backend
+      component: api
+  template:
+    metadata:
+      labels:
+        app: ai-backend
+        component: api
+    spec:
+      containers:
+      - name: api
+        image: ai-backend:latest
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 8000
+          name: http
+        env:
+        - name: DATABASE_URL
+          valueFrom:
+            secretKeyRef:
+              name: ai-backend-secrets
+              key: database-url
+        - name: REDIS_URL
+          valueFrom:
+            secretKeyRef:
+              name: ai-backend-secrets
+              key: redis-url
+        - name: CELERY_BROKER_URL
+          valueFrom:
+            secretKeyRef:
+              name: ai-backend-secrets
+              key: celery-broker-url
+        - name: CELERY_RESULT_BACKEND
+          valueFrom:
+            secretKeyRef:
+              name: ai-backend-secrets
+              key: celery-result-backend
+        - name: SECRET_KEY
+          valueFrom:
+            secretKeyRef:
+              name: ai-backend-secrets
+              key: secret-key
+        - name: OPENAI_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: ai-backend-secrets
+              key: openai-api-key
+        - name: DEBUG
+          value: "False"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 10
+          periodSeconds: 30
+          timeoutSeconds: 5
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 5
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        resources:
+          requests:
+            cpu: 100m
+            memory: 256Mi
+          limits:
+            cpu: 500m
+            memory: 512Mi
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchExpressions:
+                - key: app
+                  operator: In
+                  values:
+                  - ai-backend
+              topologyKey: kubernetes.io/hostname
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ai-backend-api
+  namespace: ai-backend
+  labels:
+    app: ai-backend
+    component: api
+spec:
+  type: ClusterIP
+  ports:
+  - port: 8008
+    targetPort: 8000
+    protocol: TCP
+    name: http
+  selector:
+    app: ai-backend
+    component: api

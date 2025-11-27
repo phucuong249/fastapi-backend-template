@@ -1,0 +1,108 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ai-backend-celery-worker
+  namespace: ai-backend
+  labels:
+    app: ai-backend
+    component: celery-worker
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: ai-backend
+      component: celery-worker
+  template:
+    metadata:
+      labels:
+        app: ai-backend
+        component: celery-worker
+    spec:
+      containers:
+      - name: celery-worker
+        image: ai-backend:latest
+        imagePullPolicy: Always
+        command:
+        - celery
+        - -A
+        - src.app.services.celery_app
+        - worker
+        - --loglevel=info
+        - --concurrency=4
+        env:
+        - name: DATABASE_URL
+          valueFrom:
+            secretKeyRef:
+              name: ai-backend-secrets
+              key: database-url
+        - name: REDIS_URL
+          valueFrom:
+            secretKeyRef:
+              name: ai-backend-secrets
+              key: redis-url
+        - name: CELERY_BROKER_URL
+          valueFrom:
+            secretKeyRef:
+              name: ai-backend-secrets
+              key: celery-broker-url
+        - name: CELERY_RESULT_BACKEND
+          valueFrom:
+            secretKeyRef:
+              name: ai-backend-secrets
+              key: celery-result-backend
+        - name: SECRET_KEY
+          valueFrom:
+            secretKeyRef:
+              name: ai-backend-secrets
+              key: secret-key
+        - name: DEBUG
+          value: "False"
+        resources:
+          requests:
+            cpu: 500m
+            memory: 512Mi
+          limits:
+            cpu: 2000m
+            memory: 2Gi
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchExpressions:
+                - key: app
+                  operator: In
+                  values:
+                  - ai-backend
+                - key: component
+                  operator: In
+                  values:
+                  - celery-worker
+              topologyKey: kubernetes.io/hostname
+---
+apiVersion: autoscaling.k8s.io/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: ai-backend-celery-worker-hpa
+  namespace: ai-backend
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: ai-backend-celery-worker
+  minReplicas: 2
+  maxReplicas: 10
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 80
