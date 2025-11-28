@@ -12,6 +12,7 @@ from sqlalchemy.orm import selectinload
 from sqlalchemy import select
 
 from src.app.core.dependencies import check_tier, get_current_active_user
+from src.app.core.exceptions import AuthorizationException, ResourceNotFoundException, ValidationException
 from src.app.db.models import AITask, User
 from src.app.db.session import get_session
 from src.app.schemas.ai_task import (
@@ -52,6 +53,12 @@ async def create_llm_task(
     Returns:
         Created AI task
     """
+    if not (1 <= request.max_tokens <= 4000):
+        raise ValidationException("max_tokens must be between 1 and 4000")
+    
+    if not (0.0 <= request.temperature <= 2.0):
+        raise ValidationException("temperature must be between 0.0 and 2.0")
+    
     # Check user tier for premium features
     if request.max_tokens > 1000:
         tier_hierarchy = {"free": 0, "pro": 1, "enterprise": 2}
@@ -59,10 +66,18 @@ async def create_llm_task(
         required_tier_level = tier_hierarchy.get("pro", 0)
         
         if user_tier_level < required_tier_level:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="This feature requires pro tier or higher"
+            logger.warning(
+                f"User {current_user.id} attempted LLM task exceeding tier limits",
+                extra={
+                    "event": "tier_restriction_violation",
+                    "user_id": current_user.id,
+                    "user_tier": current_user.tier,
+                    "required_tier": "pro",
+                    "task_type": "llm",
+                    "max_tokens": request.max_tokens
+                }
             )
+            raise AuthorizationException("LLM requests with more than 1000 tokens require pro tier or higher")
     
     # Create task record
     task = AITask(
@@ -112,16 +127,27 @@ async def create_image_task(
     Returns:
         Created AI task
     """
+    # Validate input constraints before tier check
+    if not (1 <= request.n <= 10):
+        raise ValidationException("Number of images (n) must be between 1 and 10")
+    
     # Check user tier for image generation
     tier_hierarchy = {"free": 0, "pro": 1, "enterprise": 2}
     user_tier_level = tier_hierarchy.get(current_user.tier, 0)
     required_tier_level = tier_hierarchy.get("pro", 0)
     
     if user_tier_level < required_tier_level:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Image generation requires pro tier or higher"
+        logger.warning(
+            f"User {current_user.id} attempted image generation without proper tier",
+            extra={
+                "event": "tier_restriction_violation",
+                "user_id": current_user.id,
+                "user_tier": current_user.tier,
+                "required_tier": "pro",
+                "task_type": "image"
+            }
         )
+        raise AuthorizationException("Image generation requires pro tier or higher")
     
     # Create task record
     task = AITask(
@@ -170,16 +196,27 @@ async def create_video_task(
     Returns:
         Created AI task
     """
+    if not request.video_url or len(request.video_url) > 2000:
+        raise ValidationException("video_url must be provided and less than 2000 characters")
+    
     # Check user tier for video detection
     tier_hierarchy = {"free": 0, "pro": 1, "enterprise": 2}
     user_tier_level = tier_hierarchy.get(current_user.tier, 0)
     required_tier_level = tier_hierarchy.get("enterprise", 0)
     
     if user_tier_level < required_tier_level:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Video detection requires enterprise tier or higher"
+        # Log tier restriction violation for analytics
+        logger.warning(
+            f"User {current_user.id} attempted video detection without proper tier",
+            extra={
+                "event": "tier_restriction_violation",
+                "user_id": current_user.id,
+                "user_tier": current_user.tier,
+                "required_tier": "enterprise",
+                "task_type": "video"
+            }
         )
+        raise AuthorizationException("Video detection requires enterprise tier or higher")
     
     # Create task record
     task = AITask(
@@ -237,17 +274,20 @@ async def get_task_status(
     task = result.scalar_one_or_none()
     
     if not task:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Task not found",
-        )
+        raise ResourceNotFoundException("Task")
     
-    # Check authorization
     if task.user_id != current_user.id:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Not authorized to view this task",
+        logger.warning(
+            f"User {current_user.id} attempted to access task {task_id} owned by user {task.user_id}",
+            extra={
+                "event": "unauthorized_task_access",
+                "accessing_user_id": current_user.id,
+                "task_id": task_id,
+                "task_owner_id": task.user_id
+            }
         )
+        # Return same error as not found to prevent enumeration attacks
+        raise ResourceNotFoundException("Task")
     
     # Get Celery task status
     from src.app.services.celery_app import celery_app

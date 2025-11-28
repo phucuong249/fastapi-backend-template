@@ -80,6 +80,17 @@ class RateLimitException(AppException):
         )
 
 
+class ConflictException(AppException):
+    """Raised when a resource conflict occurs (e.g., duplicate email)."""
+    
+    def __init__(self, message: str = "Resource already exists"):
+        super().__init__(
+            message=message,
+            status_code=status.HTTP_409_CONFLICT,
+            error_code="CONFLICT_ERROR",
+        )
+
+
 async def app_exception_handler(request: Request, exc: AppException) -> JSONResponse:
     """Handle application exceptions."""
     logger.error(

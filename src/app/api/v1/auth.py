@@ -13,7 +13,7 @@ from sqlalchemy import select
 
 from src.app.core.config import settings
 from src.app.core.dependencies import get_current_active_user
-from src.app.core.exceptions import AuthenticationException, ValidationException
+from src.app.core.exceptions import AuthenticationException, ConflictException, ValidationException
 from src.app.core.security import (
     create_access_token,
     create_refresh_token,
@@ -52,18 +52,18 @@ async def register(
         Created user
         
     Raises:
-        ValidationException: If user already exists
+        ConflictException: If user with email already exists
     """
 
-    # Check if user already exists
-    result = await session.execute(
-        select(User).where(
-            (User.email == user_data.email) | (User.username == user_data.username)
-        )
+    email_result = await session.execute(
+        select(User).where(User.email == user_data.email)
     )
-    
-    if result.scalar_one_or_none():
-        raise ValidationException("User with this email or username already exists")
+    if email_result.scalar_one_or_none():
+        logger.warning(
+            f"Registration attempt with existing email: {user_data.email}",
+            extra={"event": "duplicate_registration_email", "email": user_data.email}
+        )
+        raise ConflictException("User with this email already exists")
     
     # Create new user
     hashed_password = hash_password(user_data.password)
@@ -110,9 +110,17 @@ async def login(
     user = result.scalar_one_or_none()
     
     if not user or not verify_password(credentials.password, user.hashed_password):
+        logger.warning(
+            f"Failed login attempt for email: {credentials.email}",
+            extra={"event": "failed_login", "email": credentials.email}
+        )
         raise AuthenticationException("Invalid email or password")
     
     if not user.is_active:
+        logger.warning(
+            f"Login attempt for inactive account: {user.email}",
+            extra={"event": "inactive_account_login", "user_id": user.id, "email": user.email}
+        )
         raise AuthenticationException("User account is inactive")
     
     # Update last login
@@ -173,6 +181,10 @@ async def refresh_token(
         user = result.scalar_one_or_none()
         
         if not user or not user.is_active:
+            logger.warning(
+                f"Token refresh failed - user not found or inactive",
+                extra={"event": "invalid_token_refresh", "user_id": user_id if user else None}
+            )
             raise AuthenticationException("User not found or inactive")
         
         # Create new tokens
