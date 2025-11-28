@@ -7,7 +7,9 @@ from typing import Any, Dict
 
 from celery import Celery, Task
 
+from src.app.common.enums import TaskType
 from src.app.core.config import settings
+from src.app.services.task_runner import run_task_sync
 
 logger = logging.getLogger(__name__)
 
@@ -50,114 +52,45 @@ celery_app.Task = CallbackTask
 
 # Task definitions
 @celery_app.task(bind=True, name="ai_backend.tasks.process_llm")
-def process_llm_task(
-    self,
-    task_id: int,
-    prompt: str,
-    model: str = "gpt-3.5-turbo",
-    max_tokens: int = 500,
-    temperature: float = 0.7,
-) -> Dict[str, Any]:
+def process_llm_task(self, task_id: int, payload: Dict[str, Any]) -> Dict[str, Any]:
     """
-    Process LLM text generation task.
-    
-    Args:
-        task_id: Database task ID
-        prompt: Input prompt
-        model: Model name
-        max_tokens: Maximum tokens
-        temperature: Sampling temperature
-        
-    Returns:
-        Task result
+    Process an LLM task using the local processor registry.
     """
-    try:
-        import asyncio
-        
-        from src.app.services.llm import get_llm_service
-        
-        logger.info(f"Processing LLM task {task_id}")
-        
-        service = get_llm_service("openai")
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        
-        result = loop.run_until_complete(
-            service.generate_text(
-                prompt=prompt,
-                model=model,
-                max_tokens=max_tokens,
-                temperature=temperature,
-            )
-        )
-        
-        return result
-    except Exception as e:
-        logger.error(f"LLM task {task_id} failed: {str(e)}")
-        raise
+    logger.info("Processing LLM task %s", task_id)
+    return run_task_sync(TaskType.LLM, task_id, payload)
+
+
+@celery_app.task(bind=True, name="ai_backend.tasks.process_stt")
+def process_stt_task(self, task_id: int, payload: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Process a speech-to-text task locally.
+    """
+    logger.info("Processing STT task %s", task_id)
+    return run_task_sync(TaskType.STT, task_id, payload)
+
+
+@celery_app.task(bind=True, name="ai_backend.tasks.process_tts")
+def process_tts_task(self, task_id: int, payload: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Process a text-to-speech task locally.
+    """
+    logger.info("Processing TTS task %s", task_id)
+    return run_task_sync(TaskType.TTS, task_id, payload)
 
 
 @celery_app.task(bind=True, name="ai_backend.tasks.process_image")
-def process_image_task(
-    self,
-    task_id: int,
-    prompt: str,
-    size: str = "1024x1024",
-    n: int = 1,
-) -> Dict[str, Any]:
+def process_image_task(self, task_id: int, payload: Dict[str, Any]) -> Dict[str, Any]:
     """
-    Process image generation task.
-    
-    Args:
-        task_id: Database task ID
-        prompt: Image description
-        size: Image size
-        n: Number of images
-        
-    Returns:
-        Task result
+    Process an image generation task locally.
     """
-    try:
-        logger.info(f"Processing image generation task {task_id}")
-        
-        # Placeholder for image generation logic
-        return {
-            "status": "success",
-            "images": [],
-            "task_id": task_id,
-        }
-    except Exception as e:
-        logger.error(f"Image task {task_id} failed: {str(e)}")
-        raise
+    logger.info("Processing image task %s", task_id)
+    return run_task_sync(TaskType.IMAGE, task_id, payload)
 
 
 @celery_app.task(bind=True, name="ai_backend.tasks.process_video")
-def process_video_task(
-    self,
-    task_id: int,
-    video_url: str,
-    detection_type: str = "object",
-) -> Dict[str, Any]:
+def process_video_task(self, task_id: int, payload: Dict[str, Any]) -> Dict[str, Any]:
     """
-    Process video detection task.
-    
-    Args:
-        task_id: Database task ID
-        video_url: URL to video file
-        detection_type: Type of detection
-        
-    Returns:
-        Task result
+    Process a video detection task locally.
     """
-    try:
-        logger.info(f"Processing video detection task {task_id}")
-        
-        # Placeholder for video detection logic
-        return {
-            "status": "success",
-            "detections": [],
-            "task_id": task_id,
-        }
-    except Exception as e:
-        logger.error(f"Video task {task_id} failed: {str(e)}")
-        raise
+    logger.info("Processing video task %s", task_id)
+    return run_task_sync(TaskType.VIDEO, task_id, payload)
